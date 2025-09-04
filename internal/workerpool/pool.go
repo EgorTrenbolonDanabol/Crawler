@@ -156,6 +156,7 @@ func (p *poolImpl[T, R]) List(ctx context.Context, workers int, start T, searche
 		startChilds := searcher(start)
 		inp := p.generator(ctx, startChilds)
 		activeWorkers := new(sync.WaitGroup)
+		rw := sync.RWMutex{} // RWMutex to thread safe writing to slice channels
 
 		for {
 			tree := make([]<-chan T, 0, workers)
@@ -165,7 +166,9 @@ func (p *poolImpl[T, R]) List(ctx context.Context, workers int, start T, searche
 					defer activeWorkers.Done()
 					ch := p.findChilds(ctx, inp, searcher)
 					if ch != nil {
+						rw.Lock()
 						tree = append(tree, ch)
+						rw.Unlock()
 					}
 				}()
 			}
