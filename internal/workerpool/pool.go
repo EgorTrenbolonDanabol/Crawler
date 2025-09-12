@@ -122,18 +122,20 @@ func (p *poolImpl[T, R]) fanIn(ctx context.Context, channels []<-chan T) <-chan 
 			wg.Add(1) // increments score in wg
 			go func() {
 				defer wg.Done() // decrements score in wg
-
-				select {
-				case <-ctx.Done():
-					return
-				case v, ok := <-ch:
-					if !ok {
-						return
-					}
+				for {
 					select {
 					case <-ctx.Done():
 						return
-					case ans <- v: // writes value to ans
+					case v, ok := <-ch:
+						if !ok {
+							return
+						}
+						select {
+						case <-ctx.Done():
+							return
+
+						case ans <- v: // writes value to ans
+						}
 					}
 				}
 			}()
