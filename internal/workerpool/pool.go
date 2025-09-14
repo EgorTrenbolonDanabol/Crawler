@@ -71,7 +71,44 @@ func (p *poolImpl[T, R]) Accumulate(
 	input <-chan T,
 	accumulator Accumulator[T, R],
 ) <-chan R {
-	panic("not implemented")
+	ans := make(chan R)
+	wg := sync.WaitGroup{} // sync.WaitGroup for asynchronous closing the channel
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			var intermediateValue R
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-input:
+					if !ok {
+						select {
+						case <-ctx.Done():
+							return
+						case ans <- intermediateValue:
+							return
+						}
+					}
+
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						intermediateValue = accumulator(v, intermediateValue) // тяжелая оперция занимающее много времени
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		defer close(ans) // asynchronous closes the channel
+		wg.Wait()
+	}()
+
+	return ans
 }
 
 func (p *poolImpl[T, R]) generator(ctx context.Context, values []T) <-chan T {
