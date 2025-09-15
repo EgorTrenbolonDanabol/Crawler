@@ -227,5 +227,37 @@ func (p *poolImpl[T, R]) Transform(
 	input <-chan T,
 	transformer Transformer[T, R],
 ) <-chan R {
-	panic("not implemented")
+	var wg sync.WaitGroup
+	ans := make(chan R)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case v, ok := <-input:
+					if !ok {
+						return
+					}
+
+					result := transformer(v)
+
+					select {
+					case <-ctx.Done():
+						return
+					case ans <- result:
+					}
+				}
+			}
+		}()
+
+	}
+	go func() {
+		defer close(ans)
+		wg.Wait()
+	}()
+
+	return ans
 }

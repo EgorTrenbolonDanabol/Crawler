@@ -4,6 +4,7 @@ import (
 	"context"
 	"crawler/internal/fs"
 	"crawler/internal/workerpool"
+	"encoding/json"
 )
 
 // Configuration holds the configuration for the crawler, specifying the number of workers for
@@ -66,6 +67,111 @@ func New[T, R any]() *crawlerImpl[T, R] {
 	return &crawlerImpl[T, R]{}
 }
 
+func (c *crawlerImpl[T, R]) Search(
+	ctx context.Context,
+	fileSystem fs.FileSystem,
+	root string,
+	searchWorkers int,
+	errorChan chan error,
+) <-chan string {
+	pool := workerpool.New[string, R]()
+	files := make(chan string)
+	go func() {
+		defer close(files)
+		pool.List(ctx, searchWorkers, root, func(parent string) []string {
+			slice, err := fileSystem.ReadDir(parent)
+
+			if err != nil {
+				errorChan <- err
+				return nil
+			}
+
+			ans := make([]string, 0)
+			for _, entry := range slice {
+				path := fileSystem.Join(parent, entry.Name())
+				if entry.IsDir() {
+					ans = append(ans, path)
+				} else {
+					select {
+					case <-ctx.Done():
+					case files <- path:
+
+					}
+				}
+
+			}
+
+			return ans
+		})
+	}()
+
+	return files
+}
+
+func (c *crawlerImpl[T, R]) ProcessFile(
+	ctx context.Context,
+	fileSystem fs.FileSystem,
+	inp <-chan string,
+	workers int,
+	errorChan chan error,
+) <-chan T {
+	poolTransform := workerpool.New[string, T]() // creates workerpool
+	jsons := poolTransform.Transform(ctx, workers, inp, func(filePath string) T {
+		var t T
+		file, err := fileSystem.Open(filePath)
+
+		if err != nil {
+			errorChan <- err
+			return t
+		}
+		defer file.Close()
+
+		if err := json.NewDecoder(file).Decode(&t); err != nil {
+			errorChan <- err
+			return t
+		}
+		return t
+	})
+	return jsons
+
+}
+
+func (c *crawlerImpl[T, R]) Combiner(
+	ctx context.Context,
+	combiner Combiner[R],
+	inp <-chan T,
+	workers int,
+	accumulator workerpool.Accumulator[T, R],
+) <-chan R {
+	poolAccumulate := workerpool.New[T, R]() // creates workerpool
+
+	accumulatedChannel := poolAccumulate.Accumulate(ctx, workers, inp, accumulator)
+	var accum R
+	res := make(chan R)
+	go func() {
+		defer close(res)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case v, ok := <-accumulatedChannel:
+				if !ok {
+					select {
+					case <-ctx.Done():
+						return
+					case res <- accum:
+					}
+					return
+				}
+				accum = combiner(v, accum)
+			}
+		}
+
+	}()
+	return res
+
+}
+
 func (c *crawlerImpl[T, R]) Collect(
 	ctx context.Context,
 	fileSystem fs.FileSystem,
@@ -74,5 +180,22 @@ func (c *crawlerImpl[T, R]) Collect(
 	accumulator workerpool.Accumulator[T, R],
 	combiner Combiner[R],
 ) (R, error) {
-	panic("not implemented")
+	errorChan := make(chan error)
+	ctxErr, cancel := context.WithCancelCause(ctx)
+	ctxForPipeline := context.WithoutCancel(ctxErr)
+
+	filesChan := c.Search(ctxErr, fileSystem, root, conf.SearchWorkers, errorChan)                      // gain all files
+	processedFiles := c.ProcessFile(ctxForPipeline, fileSystem, filesChan, conf.FileWorkers, errorChan) // transform elements to T type
+	combine := c.Combiner(ctxForPipeline, combiner, processedFiles, conf.AccumulatorWorkers, accumulator)
+
+	for {
+		select {
+		case e := <-errorChan: // if there was an error in something worker
+			cancel(e) // calls cancel function with this error
+		case val := <-combine: // if result value is calculated
+
+			return val, context.Cause(ctxErr) // returns this value and (perhaps) happened error
+		}
+	}
+
 }
