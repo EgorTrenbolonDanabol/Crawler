@@ -115,7 +115,7 @@ func (c *crawlerImpl[T, R]) ProcessFile(
 	workers int,
 	errorChan chan error,
 ) <-chan T {
-	poolTransform := workerpool.New[string, T]() // creates workerpool
+	poolTransform := workerpool.New[string, T]()
 	jsons := poolTransform.Transform(ctx, workers, inp, func(filePath string) T {
 		var t T
 		file, err := fileSystem.Open(filePath)
@@ -143,7 +143,7 @@ func (c *crawlerImpl[T, R]) Combiner(
 	workers int,
 	accumulator workerpool.Accumulator[T, R],
 ) <-chan R {
-	poolAccumulate := workerpool.New[T, R]() // creates workerpool
+	poolAccumulate := workerpool.New[T, R]()
 
 	accumulatedChannel := poolAccumulate.Accumulate(ctx, workers, inp, accumulator)
 	var accum R
@@ -187,7 +187,7 @@ func (c *crawlerImpl[T, R]) Collect(
 	filesChan := c.Search(ctxErr, fileSystem, root, conf.SearchWorkers, errorChan)                      // gain all files
 	processedFiles := c.ProcessFile(ctxForPipeline, fileSystem, filesChan, conf.FileWorkers, errorChan) // transform elements to T type
 	combine := c.Combiner(ctxForPipeline, combiner, processedFiles, conf.AccumulatorWorkers, accumulator)
-
+	// сделать позже waitgroup
 	for {
 		select {
 		case e := <-errorChan: // if there was an error in something worker
