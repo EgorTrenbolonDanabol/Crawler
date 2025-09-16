@@ -82,7 +82,6 @@ func (c *crawlerImpl[T, R]) Search(
 		pool.List(ctx, searchWorkers, root, func(parent string) []string {
 			defer func() {
 				if r := recover(); r != nil {
-					// превратили панику в error и отправили в канал ошибок
 					switch v := r.(type) {
 					case error:
 						errorChan <- v

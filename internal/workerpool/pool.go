@@ -96,7 +96,7 @@ func (p *poolImpl[T, R]) Accumulate(
 					case <-ctx.Done():
 						return
 					default:
-						intermediateValue = accumulator(v, intermediateValue) // тяжелая оперция занимающее много времени
+						intermediateValue = accumulator(v, intermediateValue)
 					}
 				}
 			}
