@@ -5,6 +5,7 @@ import (
 	"crawler/internal/fs"
 	"crawler/internal/workerpool"
 	"encoding/json"
+	"fmt"
 )
 
 // Configuration holds the configuration for the crawler, specifying the number of workers for
@@ -79,6 +80,17 @@ func (c *crawlerImpl[T, R]) Search(
 	go func() {
 		defer close(files)
 		pool.List(ctx, searchWorkers, root, func(parent string) []string {
+			defer func() {
+				if r := recover(); r != nil {
+					// превратили панику в error и отправили в канал ошибок
+					switch v := r.(type) {
+					case error:
+						errorChan <- v
+					default:
+						errorChan <- fmt.Errorf("%v", v)
+					}
+				}
+			}()
 			slice, err := fileSystem.ReadDir(parent)
 
 			if err != nil {
@@ -118,6 +130,17 @@ func (c *crawlerImpl[T, R]) ProcessFile(
 	poolTransform := workerpool.New[string, T]()
 	jsons := poolTransform.Transform(ctx, workers, inp, func(filePath string) T {
 		var t T
+
+		defer func() {
+			if r := recover(); r != nil {
+				switch v := r.(type) {
+				case error:
+					errorChan <- v
+				default:
+					errorChan <- fmt.Errorf("%v", v)
+				}
+			}
+		}()
 		file, err := fileSystem.Open(filePath)
 
 		if err != nil {
@@ -193,7 +216,6 @@ func (c *crawlerImpl[T, R]) Collect(
 		case e := <-errorChan: // if there was an error in something worker
 			cancel(e) // calls cancel function with this error
 		case val := <-combine: // if result value is calculated
-
 			return val, context.Cause(ctxErr) // returns this value and (perhaps) happened error
 		}
 	}
