@@ -210,7 +210,6 @@ func (c *crawlerImpl[T, R]) Collect(
 	filesChan := c.Search(ctxErr, fileSystem, root, conf.SearchWorkers, errorChan)                      // gain all files
 	processedFiles := c.ProcessFile(ctxForPipeline, fileSystem, filesChan, conf.FileWorkers, errorChan) // transform elements to T type
 	combine := c.Combiner(ctxForPipeline, combiner, processedFiles, conf.AccumulatorWorkers, accumulator)
-	// сделать позже waitgroup
 	for {
 		select {
 		case e := <-errorChan: // if there was an error in something worker
